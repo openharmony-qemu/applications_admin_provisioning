@@ -38,6 +38,7 @@ export class AppDetailData {
   public ret: boolean = true;
 
   async checkAppItem(elementNameVal: Want) {
+    this.ret = false;
     logger.info(TAG, 'checkAppItem in bundleName:' + elementNameVal.bundleName + ' | abilityName:' +
     elementNameVal.abilityName);
     let want: Want = {
@@ -66,7 +67,8 @@ export class AppDetailData {
       return this.ret;
     }
     logger.info(TAG, 'checkAppItem success');
-    return this.ret;
+    this.ret = true;
+    return true;
   }
 
   async getBundleInfoItem(bundleName: string, appInfo: MyApplicationInfo) {

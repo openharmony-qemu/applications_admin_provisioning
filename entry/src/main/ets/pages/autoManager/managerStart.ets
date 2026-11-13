@@ -178,7 +178,12 @@ struct ManagerStart {
 
   parseManageParameter() {
     this.storage = LocalStorage.getShared();
-    let data = this.storage.get<Want>('autoManagerAbilityWant');
+    const data: Want | undefined = this.storage.get<Want>('autoManagerAbilityWant');
+    if (!data || !data.parameters) {
+      logger.error(TAG, 'Missing auto-manager provisioning request');
+      (getContext(this) as common.UIAbilityContext).terminateSelf();
+      return;
+    }
 
     if (!utils.checkObjPropertyValid(data, 'parameters.elementName.abilityName') ||
     !utils.checkObjPropertyValid(data, 'parameters.enterprise.name') ||

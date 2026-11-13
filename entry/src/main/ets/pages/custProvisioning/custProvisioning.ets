@@ -15,7 +15,7 @@
 
 import {deployComponent} from '../component/deployComponent'
 
-@Entry
+@Entry({ useSharedStorage: true })
 @Component
 struct custProvisioning {
   build() {

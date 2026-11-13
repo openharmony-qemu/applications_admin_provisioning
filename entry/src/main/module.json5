@@ -2,7 +2,6 @@
   "module": {
     "name": "adminprovisioning",
     "type": "entry",
-    "srcEntrance": "./ets/Application/AbilityStage.ts",
     "description": "$string:description_adminProvisioning",
     "mainElement": "com.ohos.adminprovisioning.MainAbility",
     "deviceTypes": [
@@ -13,7 +12,6 @@
     "deliveryWithInstall": true,
     "installationFree": false,
     "pages": "$profile:main_pages",
-    "uiSyntax": "ets",
     "abilities": [
       {
         "skills": [
@@ -28,26 +26,42 @@
         ],
         "removeMissionAfterTerminate": true,
         "name": "com.ohos.adminprovisioning.MainAbility",
-        "srcEntrance": "./ets/MainAbility/MainAbility.ts",
         "description": "$string:description_mainability",
         "icon": "$media:icon",
         "label": "$string:entry_MainAbility",
         "visible": false,
         "launchType": "singleton",
         "startWindowIcon": "$media:transparent",
-        "startWindowBackground": "$color:color_00000000_transparent"
+        "startWindowBackground": "$color:color_00000000_transparent",
+        "srcEntry": "./ets/MainAbility/MainAbility.ts"
       },
       {
         "removeMissionAfterTerminate": true,
         "name": "com.ohos.automanager.AutoManagerAbility",
-        "srcEntrance": "./ets/MainAbility/AutoManagerAbility.ts",
         "description": "$string:description_autoManagerAbility",
         "icon": "$media:icon",
         "visible": true,
         "launchType": "singleton",
-        "permissions": ["ohos.permission.PROVISIONING_MESSAGE"],
+        "permissions": [
+          "ohos.permission.PROVISIONING_MESSAGE"
+        ],
         "startWindowIcon": "$media:transparent",
-        "startWindowBackground": "$color:color_00000000_transparent"
+        "startWindowBackground": "$color:color_00000000_transparent",
+        "srcEntry": "./ets/MainAbility/AutoManagerAbility.ts"
+      },
+      {
+        "removeMissionAfterTerminate": true,
+        "name": "ByodAdminProvisionAbility",
+        "description": "$string:description_ByodAdminProvisionAbility",
+        "icon": "$media:icon",
+        "exported": true,
+        "launchType": "singleton",
+        "permissions": [
+          "ohos.permission.START_PROVISIONING_MESSAGE"
+        ],
+        "startWindowIcon": "$media:transparent",
+        "startWindowBackground": "$color:color_00000000_transparent",
+        "srcEntry": "./ets/MainAbility/ByodAdminProvisionAbility.ts"
       }
     ],
     "extensionAbilities": [
@@ -56,8 +70,8 @@
         "icon": "$media:icon",
         "description": "UIExtensionAbility",
         "exported": false,
-        "type": "ui",
-        "srcEntrance": "./ets/MainAbility/UIExtensionAbility.ets"
+        "type": "sys/commonUI",
+        "srcEntry": "./ets/MainAbility/UIExtensionAbility.ets"
       }
     ],
     "requestPermissions": [
@@ -76,6 +90,7 @@
       {
         "name": "ohos.permission.INTERNET"
       }
-    ]
+    ],
+    "srcEntry": "./ets/Application/AbilityStage.ts"
   }
 }

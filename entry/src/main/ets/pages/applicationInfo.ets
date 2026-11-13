@@ -28,17 +28,12 @@ import adminManager from '@ohos.enterprise.adminManager';
 import { BusinessError } from '@ohos.base';
 import common from '@ohos.app.ability.common';
 
-let appInfo: MyApplicationInfo;
-let elementNameVal: Want;
-let isAdminTypeVal: adminManager.AdminType;
-let isActiveState: boolean;
-let enterInfo: adminManager.EnterpriseInfo;
 const TAG = 'ApplicationInfo';
 
-@Entry
+@Entry({ useSharedStorage: true })
 @Component
 struct ApplicationInfo {
-  @StorageLink('applicationInfo') applicationInfo: MyApplicationInfo = {
+  @State applicationInfo: MyApplicationInfo = {
     appIcon: '',
     appTitle: '',
     appBundleName: '',
@@ -46,7 +41,14 @@ struct ApplicationInfo {
   };
   @State isShowActive: boolean = false;
   @State isEnableButton: boolean = false;
-  @StorageLink('activeType') isAdminType: number = 0;
+  @State operationPending: boolean = false;
+  @State operationError: string = '';
+  private pageActive: boolean = true;
+  private requestReady: boolean = false;
+  private request: Want | undefined = undefined;
+  private elementNameVal: Want = { bundleName: '', abilityName: '' };
+  private enterInfo: adminManager.EnterpriseInfo = { name: '', description: '' };
+  @State isAdminType: number = 0;
   @State deviceAdminActive: string = '';
   @State deviceAdminDisActive: string = '';
   @State enterpriseName: string = '';
@@ -55,6 +57,9 @@ struct ApplicationInfo {
 
   build() {
     Column() {
+      if (this.operationError.length > 0) {
+        Text(this.operationError).fontColor(Color.Red).id('admin-provisioning-error');
+      }
       Column() {
         GridContainer({
           columns: utils.isLargeDevice(),
@@ -158,7 +163,8 @@ struct ApplicationInfo {
                 .fontSize($r('sys.float.ohos_id_text_size_button1'))
                 .fontColor($r('sys.color.ohos_id_color_text_primary_activated'))
             }
-            .enabled(this.isEnableButton)
+            .enabled(this.requestReady && this.isEnableButton && !this.operationPending)
+            .id('admin-provisioning-activate')
             .backgroundColor($r('sys.color.ohos_id_color_button_normal'))
             .height($r('app.float.button_height'))
             .margin({
@@ -185,9 +191,11 @@ struct ApplicationInfo {
               left: $r('app.float.wh_value_6'),
               bottom: $r('app.float.wh_value_24')
             })
+            .enabled(!this.operationPending)
+            .id('admin-provisioning-cancel')
             .onClick(() => {
               logger.info(TAG, 'button cancel in isShowActive:' + this.isShowActive);
-              appDetailData.terminateAbilityPage();
+              this.cancelAdmin();
             })
             .useSizeType({
               xs: { span: 3, offset: 4 }, sm: { span: 3, offset: 4 },
@@ -210,63 +218,93 @@ struct ApplicationInfo {
   }
 
   async aboutToAppear(): Promise<void> {
-    elementNameVal = {
+    this.pageActive = true;
+    this.requestReady = false;
+    this.request = this.storage.get<Want>('adminProvisioningWant');
+    this.elementNameVal = {
       abilityName: '',
       bundleName: '',
     };
 
-    enterInfo = {
+    this.enterInfo = {
       name: '',
       description: '',
     };
 
-    isAdminTypeVal = 0;
     logger.info(TAG, 'aboutToAppear in');
-    await this.getCheckAbilityList(this.applicationInfo, elementNameVal, isAdminTypeVal);
+    try {
+      await this.getCheckAbilityList(this.applicationInfo);
+    } catch (error) {
+      this.isEnableButton = false;
+      this.operationError = `加载失败：${error?.message ?? '服务不可用'}`;
+    }
     logger.info(TAG, 'aboutToAppear out');
   }
 
   aboutToDisappear(): void {
+    this.pageActive = false;
     logger.info(TAG, 'aboutToDisappear');
   }
 
-  onPageShow(): void {
-    logger.info(TAG, 'onPageShow in');
-    this.isAdminActive();
-    logger.info(TAG, 'onPageShow isActiveState =' + isActiveState);
-    if (!utils.isValid(isActiveState)) {
+  async onPageShow(): Promise<void> {
+    if (!this.requestReady || !this.isCurrentRequest()) {
       return;
     }
-    this.isShowActive = isActiveState;
-    logger.info(TAG, 'onPageShow out');
+    try {
+      await this.isAdminActive();
+    } catch (error) {
+      this.isEnableButton = false;
+      this.operationError = `查询管理状态失败：${error?.message ?? '服务不可用'}`;
+      logger.error(TAG, this.operationError);
+    }
   }
 
   onPageHide() {
     logger.info(TAG, 'onPageHide');
   }
 
-  onBackPress() {
-    logger.info(TAG, 'onBackPress');
-    router.back();
+  private isCurrentRequest(): boolean {
+    return this.pageActive && this.storage.get<Want>('adminProvisioningWant') === this.request;
+  }
+
+  async cancelAdmin(): Promise<void> {
+    if (!this.operationPending && this.isCurrentRequest()) {
+      try {
+        await appDetailData.terminateAbilityPage();
+      } catch (error) {
+        this.operationError = `取消失败：${error?.message ?? '界面退出失败'}`;
+      }
+    }
+  }
+
+  onBackPress(): boolean {
+    this.cancelAdmin();
+    return true;
   }
 
   async isAdminActive() {
     let wantTemp: Want = {
-      bundleName: elementNameVal.bundleName,
-      abilityName: elementNameVal.abilityName,
+      bundleName: this.elementNameVal.bundleName,
+      abilityName: this.elementNameVal.abilityName,
     };
     let retAppState: boolean;
     let retSuperState: boolean;
-    logger.info(TAG, 'isAdminActive elementNameVal.bundleName=' + elementNameVal.bundleName +
-    ' | elementNameVal.abilityName=' + elementNameVal.abilityName);
-    if (elementNameVal.bundleName === baseData.EMPTY_STR || elementNameVal.abilityName === baseData.EMPTY_STR) {
-      logger.info(TAG, 'isAdminActive elementNameVal is null');
+    logger.info(TAG, 'isAdminActive this.elementNameVal.bundleName=' + this.elementNameVal.bundleName +
+    ' | this.elementNameVal.abilityName=' + this.elementNameVal.abilityName);
+    if (this.elementNameVal.bundleName === baseData.EMPTY_STR || this.elementNameVal.abilityName === baseData.EMPTY_STR) {
+      logger.info(TAG, 'isAdminActive this.elementNameVal is null');
       return;
     }
 
     retAppState = await edmEnterpriseDeviceManager.isAdminEnabled(wantTemp);
-    let name: string = elementNameVal.bundleName;
+    const name: string | undefined = wantTemp.bundleName;
+    if (typeof name !== 'string' || name.length === 0) {
+      throw new Error('设备管理应用名称缺失');
+    }
     retSuperState = await edmEnterpriseDeviceManager.isSuperAdmin(name);
+    if (!this.isCurrentRequest()) {
+      return;
+    }
     if (!retAppState) {
       this.isShowActive = false;
       this.isEnableButton = true;
@@ -279,44 +317,55 @@ struct ApplicationInfo {
       this.isShowActive = true;
     }
     logger.info(TAG, 'isAdminActive retAppState:' + retAppState + ' | retSuperState:' + retSuperState);
-    isActiveState = this.isShowActive;
   }
 
-  async activateAdmin(adminType: adminManager.AdminType) {
-    logger.info(TAG, 'activateAdmin isShowActive:' + this.isShowActive);
-    let wantTemp: Want = {
-      bundleName: elementNameVal.bundleName,
-      abilityName: elementNameVal.abilityName,
-    };
-    await this.isAdminActive();
-    let ret = true;
-    if (!this.isShowActive) {
-      if (adminType === edmEnterpriseDeviceManager.AdminType.ADMIN_TYPE_NORMAL) {
-        await edmEnterpriseDeviceManager.enableAdmin(wantTemp,
-          { name: enterInfo.name, description: enterInfo.description },
-        edmEnterpriseDeviceManager.AdminType.ADMIN_TYPE_NORMAL)
-          .catch((error: BusinessError) => {
-            ret = false;
-            logger.info(TAG, 'errorCode : ' + error.code + 'errorMessage : ' + error.message);
-          });
-      } else {
-        logger.warn(TAG, 'not support AdminType.ADMIN_TYPE_SUPER enable Admin')
-      }
-      logger.info(TAG, 'activateAdmin Activate admin end');
-    } else {
-      if (this.isEnableButton) {
-        await edmEnterpriseDeviceManager.disableAdmin(wantTemp)
-          .catch((error: BusinessError) => {
-            ret = false;
-            logger.info(TAG, 'errorCode : ' + error.code + 'errorMessage : ' + error.message);
-          });
-      } else {
-        logger.info(TAG, 'activateAdmin not support super admin active');
-      }
+  async activateAdmin(adminType: adminManager.AdminType): Promise<void> {
+    if (this.operationPending || !this.requestReady || !this.isCurrentRequest()) {
+      return;
     }
-    logger.info(TAG, 'activateAdmin adminType:' + adminType + ' | ret:' + ret);
-    if (ret) {
-      appDetailData.terminateAbilityPage();
+    this.operationPending = true;
+    this.operationError = '';
+    try {
+      const want: Want = {
+        bundleName: this.elementNameVal.bundleName,
+        abilityName: this.elementNameVal.abilityName
+      };
+      const enterprise: adminManager.EnterpriseInfo = { name: this.enterInfo.name, description: this.enterInfo.description };
+      if (!want.bundleName || !want.abilityName) {
+        throw new Error('请选择有效的设备管理应用');
+      }
+      await this.isAdminActive();
+      if (!this.isCurrentRequest()) {
+        return;
+      }
+      if (!this.isEnableButton) {
+        throw new Error('当前设备管理员不允许执行此操作');
+      }
+      const enable: boolean = !this.isShowActive;
+      if (enable) {
+        if (adminType !== edmEnterpriseDeviceManager.AdminType.ADMIN_TYPE_NORMAL) {
+          throw new Error('此页面只支持普通设备管理员激活');
+        }
+        await edmEnterpriseDeviceManager.enableAdmin(want,
+          enterprise,
+          edmEnterpriseDeviceManager.AdminType.ADMIN_TYPE_NORMAL);
+      } else {
+        await edmEnterpriseDeviceManager.disableAdmin(want);
+      }
+      const actual: boolean = await edmEnterpriseDeviceManager.isAdminEnabled(want);
+      if (actual !== enable) {
+        throw new Error('设备管理服务未确认请求的状态');
+      }
+      // A new singleton Want may already have replaced this page.
+      if (this.isCurrentRequest()) {
+        this.isShowActive = actual;
+        await appDetailData.terminateAbilityPage();
+      }
+    } catch (error) {
+      this.operationError = `操作失败：${error?.message ?? '设备管理服务不可用'}`;
+      logger.error(TAG, this.operationError);
+    } finally {
+      this.operationPending = false;
     }
   }
 
@@ -331,54 +380,60 @@ struct ApplicationInfo {
     return value;
   }
 
-  async getAbilityWantVal(appInfo: MyApplicationInfo, elementNameVal: Want, adminType: adminManager.AdminType) {
+  async getAbilityWantVal(appInfo: MyApplicationInfo) {
     logger.info(TAG, 'getAbilityWantVal in:');
     this.storage = LocalStorage.getShared();
-    let data = this.storage.get<Want>('adminProvisioningWant');
-
-    if (!utils.checkObjPropertyValid(data, 'parameters.elementName.abilityName') ||
-    !utils.checkObjPropertyValid(data, 'parameters.enterprise.name') ||
-    !utils.isValid((data.parameters?.elementName as Record<string, string>).bundleName) ||
-    !utils.isValid(data.parameters?.activeType) ||
-    !utils.isValid((data.parameters?.enterprise as Record<string, string>).description)) {
-      logger.warn(TAG, 'data.parameters = ' + JSON.stringify(data.parameters));
-      (getContext(this) as common.UIAbilityContext)?.terminateSelf();
-      return;
+    const data: Want | undefined = this.request;
+    if (!data || !data.parameters || !this.isCurrentRequest()) {
+      throw new Error('无效的设备管理请求');
+    }
+    const element = data.parameters.elementName as Record<string, string>;
+    const enterprise = data.parameters.enterprise as Record<string, string>;
+    if (!element || typeof element.bundleName !== 'string' || !element.bundleName ||
+        typeof element.abilityName !== 'string' || !element.abilityName ||
+        !enterprise || typeof enterprise.name !== 'string' || typeof enterprise.description !== 'string' ||
+        (data.parameters.activeType !== adminManager.AdminType.ADMIN_TYPE_NORMAL &&
+         data.parameters.activeType !== adminManager.AdminType.ADMIN_TYPE_SUPER)) {
+      throw new Error('设备管理应用、类型或企业信息无效');
     }
 
-    elementNameVal.abilityName = (data.parameters?.elementName as Record<string, string>).abilityName;
-    elementNameVal.bundleName = (data.parameters?.elementName as Record<string, string>).bundleName;
+    this.elementNameVal.abilityName = (data.parameters?.elementName as Record<string, string>).abilityName;
+    this.elementNameVal.bundleName = (data.parameters?.elementName as Record<string, string>).bundleName;
     appInfo.appBundleName = (data.parameters?.elementName as Record<string, string>).bundleName;
-    adminType = data.parameters?.activeType as adminManager.AdminType;
-    AppStorage.SetOrCreate('activeType', adminType);
+    this.isAdminType = data.parameters?.activeType as adminManager.AdminType;
 
-    enterInfo.name = (data.parameters?.enterprise as Record<string, string>).name.substring(0, baseData.MAX_LEN);
-    enterInfo.description =
+    this.enterInfo.name = (data.parameters?.enterprise as Record<string, string>).name.substring(0, baseData.MAX_LEN);
+    this.enterInfo.description =
       (data.parameters?.enterprise as Record<string, string>).description.substring(0, baseData.MAX_LEN);
-    logger.info(TAG, 'getAbilityWantVal out isAdminTypeVal.admintype:' + isAdminTypeVal +
-    ' enter.name=' + enterInfo.name + ' enter.des=' + enterInfo.description);
+    logger.info(TAG, 'getAbilityWantVal out isAdminTypeVal.admintype:' + this.isAdminType +
+    ' enter.name=' + this.enterInfo.name + ' enter.des=' + this.enterInfo.description);
   }
 
-  async getCheckAbilityList(appInfo: MyApplicationInfo, elementNameVal: Want, adminType: adminManager.AdminType) {
+  async getCheckAbilityList(appInfo: MyApplicationInfo) {
     let deviceActiveOne = '';
     let deviceActiveTwo = '';
     let deviceDeactivate = '';
     let getName = '';
     let getDescription = '';
     logger.info(TAG, 'getCheckAbilityList in:');
-    await this.getAbilityWantVal(appInfo, elementNameVal, adminType);
+    await this.getAbilityWantVal(appInfo);
 
-    let ret = await appDetailData.checkAppItem(elementNameVal);
+    let ret = await appDetailData.checkAppItem(this.elementNameVal);
     if (!ret) {
       logger.info(TAG, 'aboutToAppear not exist bundleName:' + appInfo.appBundleName);
-      appDetailData.terminateAbilityPage();
-      return;
+      throw new Error('未找到有效的设备管理扩展');
     }
 
     await this.isAdminActive();
+    if (!this.isCurrentRequest()) {
+      return;
+    }
 
     if (appInfo.appBundleName) {
       await appDetailData.getBundleInfoItem(appInfo.appBundleName, appInfo);
+    }
+    if (!this.isCurrentRequest()) {
+      return;
     }
     try {
       this.deviceAdminActive = getContext()?.resourceManager
@@ -390,8 +445,8 @@ struct ApplicationInfo {
     }
 
     let want: Want = {
-      bundleName: elementNameVal.bundleName,
-      abilityName: elementNameVal.abilityName,
+      bundleName: this.elementNameVal.bundleName,
+      abilityName: this.elementNameVal.abilityName,
     };
     let getEnterInfo: adminManager.EnterpriseInfo = {
       name: '',
@@ -402,6 +457,9 @@ struct ApplicationInfo {
       getEnterInfo = await edmEnterpriseDeviceManager.getEnterpriseInfo(want);
     }
 
+    if (!this.isCurrentRequest()) {
+      return;
+    }
     logger.info(TAG, 'getCheckAbilityList start enterpriseName=' + getEnterInfo.name +
     ' enterpriseDescription=' + getEnterInfo.description);
     if (utils.isValid(getEnterInfo.name)) {
@@ -419,13 +477,14 @@ struct ApplicationInfo {
           .getStringSync($r('app.string.enterprise_description').id, getDescription);
       } else {
         this.enterpriseName = getContext()?.resourceManager
-          .getStringSync($r('app.string.enterprise_name').id, enterInfo.name);
+          .getStringSync($r('app.string.enterprise_name').id, this.enterInfo.name);
         this.enterpriseDescription = getContext()?.resourceManager
-          .getStringSync($r('app.string.enterprise_description').id, enterInfo.description);
+          .getStringSync($r('app.string.enterprise_description').id, this.enterInfo.description);
       }
     } catch (e) {
       logger.error(TAG, 'getStringSync err =' + e.message);
     }
+    this.requestReady = true;
     logger.info(TAG, 'getCheckAbilityList enterpriseName=' + this.enterpriseName + ' enterpriseDescription=' +
     this.enterpriseDescription);
   }

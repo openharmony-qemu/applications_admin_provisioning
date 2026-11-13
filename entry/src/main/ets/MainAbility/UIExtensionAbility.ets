@@ -21,65 +21,72 @@ import configPolicy from '@ohos.configPolicy';
 import fs from '@ohos.file.fs';
 import adminManager from '@ohos.enterprise.adminManager';
 import { BusinessError } from '@ohos.base';
+import baseData from '../common/baseData';
 
 const TAG = 'AutoDeployAbility';
 
+interface ProvisionAdmin {
+  admin: Want;
+  admin_type: string;
+}
+interface ProvisionEnterprise {
+  organization_name: string;
+  description: string;
+}
+interface ProvisionConfig {
+  admin_info: ProvisionAdmin[];
+  enterprise_info: ProvisionEnterprise;
+}
+
 export default class AutoDeployAbility extends UIExtensionAbility {
-  private localStorage: LocalStorage = new LocalStorage();
+  private sessions: Set<UIExtensionContentSession> = new Set();
 
   async onSessionCreate(want: Want, session: UIExtensionContentSession): Promise<void> {
-    logger.info(TAG, 'onSessionCreate');
-    let admin: Want = {
-      bundleName: '',
-      abilityName: ''
-    };
-    let enterpriseInfo: adminManager.EnterpriseInfo = {
-      name: '',
-      description: ''
-    };
-    let adminType: adminManager.AdminType;
-    try {
-      let realpath = 'etc/edm/edm_provision_config.json';
-      await configPolicy.getOneCfgFile(realpath).then((value: string) => {
-        logger.info(TAG, 'getOneCfgFile value is : ' + value);
-        let configStr = fs.readTextSync(value);
-        logger.info(TAG, 'getOneCfgFile configStr is ' + JSON.stringify(configStr));
-        if (configStr) {
-          let jsonArray = JSON.parse(configStr);
-          admin.abilityName = jsonArray.admin_info[0].admin.abilityName;
-          admin.bundleName = jsonArray.admin_info[0].admin.bundleName;
-          enterpriseInfo.name = jsonArray.enterprise_info.organization_name;
-          enterpriseInfo.description = jsonArray.enterprise_info.description;
-          if (jsonArray.admin_info[0].admin_type == 'SDA') {
-            adminType = adminManager.AdminType.ADMIN_TYPE_SUPER;
-          }
-          this.localStorage.setOrCreate('adminInfo', admin);
-          this.localStorage.setOrCreate('enterpriseInfo', enterpriseInfo);
-          this.localStorage.setOrCreate('adminType', adminType);
-        }
-      }).catch((err: BusinessError) => {
-        logger.error(`getOneCfgFile edm_provision_config.json fail, errCode: ${err.code}, errMessage: ${err.message}`);
-      })
-    } catch (error) {
-      let code = (error as BusinessError).code;
-      let message = (error as BusinessError).message;
-      logger.info(TAG, 'getOneCfgFile error: ' + code + message);
+    if (this.sessions.has(session)) {
+      return;
     }
-    this.localStorage.setOrCreate('session', session);
-    session.loadContent('pages/custProvisioning/custProvisioning', this.localStorage);
+    this.sessions.add(session);
+    const storage: LocalStorage = new LocalStorage();
+    try {
+      const path: string = await configPolicy.getOneCfgFile('etc/edm/edm_provision_config.json');
+      const config: ProvisionConfig = JSON.parse(fs.readTextSync(path)) as ProvisionConfig;
+      if (!config || !Array.isArray(config.admin_info) || config.admin_info.length === 0 ||
+          !config.admin_info[0] || !config.admin_info[0].admin ||
+          typeof config.admin_info[0].admin.bundleName !== 'string' || !config.admin_info[0].admin.bundleName ||
+          typeof config.admin_info[0].admin.abilityName !== 'string' || !config.admin_info[0].admin.abilityName ||
+          config.admin_info[0].admin_type !== 'SDA' || !config.enterprise_info ||
+          typeof config.enterprise_info.organization_name !== 'string' ||
+          typeof config.enterprise_info.description !== 'string') {
+        throw new Error('Invalid enterprise provisioning configuration');
+      }
+      if (!this.sessions.has(session)) {
+        return;
+      }
+      storage.setOrCreate('adminInfo', config.admin_info[0].admin);
+      storage.setOrCreate('enterpriseInfo', {
+        name: config.enterprise_info.organization_name,
+        description: config.enterprise_info.description
+      } as adminManager.EnterpriseInfo);
+      storage.setOrCreate('adminType', adminManager.AdminType.ADMIN_TYPE_SUPER);
+      storage.setOrCreate('session', session);
+      await session.loadContent('pages/custProvisioning/custProvisioning', storage);
+    } catch (error) {
+      logger.error(TAG, `Provisioning configuration/page failed: ${(error as BusinessError).message}`);
+      if (this.sessions.has(session)) {
+        try {
+          await session.terminateSelfWithResult({ resultCode: baseData.ENABLE_ADMIN_FAILED });
+        } catch (deliveryError) {
+          logger.error(TAG, `Cannot deliver provisioning failure: ${(deliveryError as BusinessError).message}`);
+        }
+      }
+    }
+  }
+
+  onSessionDestroy(session: UIExtensionContentSession): void {
+    this.sessions.delete(session);
   }
 
   onDestroy(): void {
-    logger.info(TAG, 'onDestroy');
+    this.sessions.clear();
   }
-
-  onForeground(): void {
-    // Ability has brought to foreground
-    logger.info(TAG, 'onForeground');
-  }
-
-  onBackground(): void {
-    // Ability has back to background
-    logger.info(TAG, 'onBackground');
-  }
-};
+}

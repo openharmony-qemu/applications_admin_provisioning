@@ -33,6 +33,9 @@ export struct deployComponent {
   private enterpriseInfo: adminManager.EnterpriseInfo | undefined;
   private adminType: adminManager.AdminType | undefined;
   private session: UIExtensionContentSession | undefined;
+  @State operationPending: boolean = false;
+  private pageActive: boolean = false;
+  private sessionFinished: boolean = false;
 
   build() {
     PageComponent({
@@ -249,6 +252,7 @@ export struct deployComponent {
   }
 
   aboutToAppear() {
+    this.pageActive = true;
     logger.info(TAG, 'aboutToAppear');
     this.storage = LocalStorage.getShared();
     this.abilityInfo = this.storage.get<Want>('adminInfo');
@@ -257,31 +261,55 @@ export struct deployComponent {
     this.session = this.storage.get<UIExtensionContentSession>('session');
   }
 
-  private terminateAbility(flag: number) {
-    this.session?.terminateSelfWithResult({
-      resultCode: flag,
-      want: this.abilityInfo
-    });
-    this.storage.clear();
+  aboutToDisappear(): void {
+    this.pageActive = false;
   }
 
-  private EnableAdmin() {
-    let admin: Want = this.abilityInfo;
-    let entInfo: adminManager.EnterpriseInfo = this.enterpriseInfo;
+  private async terminateAbility(flag: number): Promise<void> {
+    if (!this.pageActive || this.sessionFinished || !this.session ||
+        (this.operationPending && flag === baseData.OOBE_PRE_STEP_CODE)) {
+      return;
+    }
+    this.sessionFinished = true;
     try {
-      adminManager.enableAdmin(admin, entInfo, this.adminType).then(() => {
-        logger.info(TAG, 'enableAdmin success');
-        this.terminateAbility(baseData.OOBE_NEXT_STEP_CODE);
-      }).catch((err: BusinessError) => {
-        logger.error(TAG, `enableAdmin failed, errCode: ${err.code}, errMessage: ${err.message}`);
-        this.terminateAbility(baseData.ENABLE_ADMIN_FAILED);
-      })
-    } catch (err) {
-      logger.error(TAG, `enableAdmin failed, errCode: ${err.code}, errMessage: ${err.message}`);
-      this.terminateAbility(baseData.ENABLE_ADMIN_FAILED);
+      await this.session.terminateSelfWithResult({ resultCode: flag, want: this.abilityInfo });
+      this.storage.clear();
+    } catch (error) {
+      this.sessionFinished = false;
+      logger.error(TAG, `Cannot deliver provisioning result: ${(error as BusinessError).message}`);
+    }
+  }
+
+  private async EnableAdmin(): Promise<void> {
+    if (this.operationPending || !this.pageActive || this.sessionFinished) {
+      return;
+    }
+    this.operationPending = true;
+    try {
+      const admin: Want | undefined = this.abilityInfo;
+      const enterprise: adminManager.EnterpriseInfo | undefined = this.enterpriseInfo;
+      const type: adminManager.AdminType | undefined = this.adminType;
+      if (!admin || !admin.bundleName || !admin.abilityName || !enterprise ||
+          (type !== adminManager.AdminType.ADMIN_TYPE_NORMAL && type !== adminManager.AdminType.ADMIN_TYPE_SUPER)) {
+        throw new Error('Missing administrator, enterprise or activation type');
+      }
+      const enabled: boolean = await adminManager.isAdminEnabled(admin);
+      if (!this.pageActive) {
+        return;
+      }
+      if (!enabled) {
+        await adminManager.enableAdmin(admin, enterprise, type);
+      }
+      const actual: boolean = await adminManager.isAdminEnabled(admin);
+      if (!actual) {
+        throw new Error('Enterprise service did not confirm administrator activation');
+      }
+      await this.terminateAbility(baseData.OOBE_NEXT_STEP_CODE);
+    } catch (error) {
+      logger.error(TAG, `enableAdmin failed: ${(error as BusinessError).message}`);
+      await this.terminateAbility(baseData.ENABLE_ADMIN_FAILED);
+    } finally {
+      this.operationPending = false;
     }
   }
 }
-
-
-
